@@ -1,0 +1,659 @@
+# 購物平台專案規範
+
+## 專案概述
+- 專案類型：購物平台
+- 主要角色：管理者 (User)、使用者 (Member)
+- 核心功能：商品管理、分類管理、輪播管理、關於我們
+
+## 資料庫結構設計
+
+### 1. 使用者相關
+
+#### Users 表（管理者）
+```php
+// 遷移檔案：create_users_table.php
+Schema::create('users', function (Blueprint $table) {
+    $table->id();
+    $table->string('name');
+    $table->string('email')->unique();
+    $table->timestamp('email_verified_at')->nullable();
+    $table->string('password');
+    $table->enum('role', ['admin', 'manager'])->default('manager');
+    $table->boolean('is_active')->default(true);
+    $table->rememberToken();
+    $table->timestamps();
+    $table->softDeletes();
+});
+```
+
+#### Members 表（一般使用者）
+```php
+// 遷移檔案：create_members_table.php
+Schema::create('members', function (Blueprint $table) {
+    $table->id();
+    $table->string('name');
+    $table->string('email')->unique();
+    $table->string('phone')->nullable();
+    $table->string('password');
+    $table->timestamp('email_verified_at')->nullable();
+    $table->boolean('is_active')->default(true);
+    $table->json('address')->nullable(); // 儲存地址資訊
+    $table->date('birthday')->nullable();
+    $table->enum('gender', ['male', 'female', 'other'])->nullable();
+    $table->rememberToken();
+    $table->timestamps();
+    $table->softDeletes();
+});
+```
+
+### 2. 商品相關
+
+#### ProductCategories 表（商品分類）
+```php
+// 遷移檔案：create_product_categories_table.php
+Schema::create('product_categories', function (Blueprint $table) {
+    $table->id();
+    $table->string('name');
+    $table->string('slug')->unique();
+    $table->text('description')->nullable();
+    $table->string('image')->nullable();
+    $table->unsignedBigInteger('parent_id')->nullable();
+    $table->integer('sort_order')->default(0);
+    $table->boolean('is_active')->default(true);
+    $table->timestamps();
+    $table->softDeletes();
+
+    $table->foreign('parent_id')->references('id')->on('product_categories')->onDelete('cascade');
+    $table->index(['parent_id', 'sort_order']);
+});
+```
+
+#### Products 表（商品）
+```php
+// 遷移檔案：create_products_table.php
+Schema::create('products', function (Blueprint $table) {
+    $table->id();
+    $table->string('name');
+    $table->string('slug')->unique();
+    $table->text('description')->nullable();
+    $table->text('short_description')->nullable();
+    $table->decimal('price', 10, 2);
+    $table->decimal('sale_price', 10, 2)->nullable();
+    $table->integer('stock')->default(0);
+    $table->string('sku')->unique()->nullable();
+    $table->string('barcode')->nullable();
+    $table->unsignedBigInteger('category_id');
+    $table->json('specifications')->nullable(); // 商品規格
+    $table->json('tags')->nullable(); // 商品標籤
+    $table->boolean('is_featured')->default(false);
+    $table->boolean('is_active')->default(true);
+    $table->timestamp('published_at')->nullable();
+    $table->timestamps();
+    $table->softDeletes();
+
+    $table->foreign('category_id')->references('id')->on('product_categories')->onDelete('cascade');
+    $table->index(['category_id', 'is_active']);
+    $table->index(['is_featured', 'is_active']);
+});
+```
+
+#### ProductImages 表（商品圖片）
+```php
+// 遷移檔案：create_product_images_table.php
+Schema::create('product_images', function (Blueprint $table) {
+    $table->id();
+    $table->unsignedBigInteger('product_id');
+    $table->string('image_path');
+    $table->string('alt_text')->nullable();
+    $table->integer('sort_order')->default(0);
+    $table->boolean('is_primary')->default(false);
+    $table->timestamps();
+
+    $table->foreign('product_id')->references('id')->on('products')->onDelete('cascade');
+    $table->index(['product_id', 'sort_order']);
+});
+```
+
+### 3. 輪播相關
+
+#### Banners 表（輪播）
+```php
+// 遷移檔案：create_banners_table.php
+Schema::create('banners', function (Blueprint $table) {
+    $table->id();
+    $table->string('title');
+    $table->text('description')->nullable();
+    $table->string('image');
+    $table->string('link')->nullable();
+    $table->enum('type', ['product', 'about', 'homepage'])->default('homepage');
+    $table->unsignedBigInteger('product_id')->nullable(); // 當 type 為 product 時使用
+    $table->integer('sort_order')->default(0);
+    $table->boolean('is_active')->default(true);
+    $table->timestamp('start_at')->nullable();
+    $table->timestamp('end_at')->nullable();
+    $table->timestamps();
+    $table->softDeletes();
+
+    $table->foreign('product_id')->references('id')->on('products')->onDelete('set null');
+    $table->index(['type', 'is_active', 'sort_order']);
+});
+```
+
+### 4. 關於我們
+
+#### AboutUs 表（關於我們）
+```php
+// 遷移檔案：create_about_us_table.php
+Schema::create('about_us', function (Blueprint $table) {
+    $table->id();
+    $table->string('title');
+    $table->text('content');
+    $table->string('image')->nullable();
+    $table->json('contact_info')->nullable(); // 聯絡資訊
+    $table->json('social_media')->nullable(); // 社群媒體連結
+    $table->boolean('is_active')->default(true);
+    $table->timestamps();
+    $table->softDeletes();
+});
+```
+
+## 模型定義
+
+### User 模型（管理者）
+```php
+<?php
+
+namespace App\Models;
+
+use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\SoftDeletes;
+use Illuminate\Foundation\Auth\User as Authenticatable;
+use Illuminate\Notifications\Notifiable;
+use Laravel\Sanctum\HasApiTokens;
+
+class User extends Authenticatable
+{
+    use HasApiTokens, HasFactory, Notifiable, SoftDeletes;
+
+    protected $fillable = [
+        'name',
+        'email',
+        'password',
+        'role',
+        'is_active',
+    ];
+
+    protected $hidden = [
+        'password',
+        'remember_token',
+    ];
+
+    protected $casts = [
+        'email_verified_at' => 'datetime',
+        'password' => 'hashed',
+        'is_active' => 'boolean',
+    ];
+
+    public function isAdmin(): bool
+    {
+        return $this->role === 'admin';
+    }
+
+    public function isManager(): bool
+    {
+        return $this->role === 'manager';
+    }
+}
+```
+
+### Member 模型（一般使用者）
+```php
+<?php
+
+namespace App\Models;
+
+use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\SoftDeletes;
+use Illuminate\Foundation\Auth\User as Authenticatable;
+use Illuminate\Notifications\Notifiable;
+use Laravel\Sanctum\HasApiTokens;
+
+class Member extends Authenticatable
+{
+    use HasApiTokens, HasFactory, Notifiable, SoftDeletes;
+
+    protected $fillable = [
+        'name',
+        'email',
+        'phone',
+        'password',
+        'address',
+        'birthday',
+        'gender',
+        'is_active',
+    ];
+
+    protected $hidden = [
+        'password',
+        'remember_token',
+    ];
+
+    protected $casts = [
+        'email_verified_at' => 'datetime',
+        'password' => 'hashed',
+        'address' => 'array',
+        'birthday' => 'date',
+        'is_active' => 'boolean',
+    ];
+
+    public function getAuthPassword()
+    {
+        return $this->password;
+    }
+}
+```
+
+### ProductCategory 模型
+```php
+<?php
+
+namespace App\Models;
+
+use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\SoftDeletes;
+
+class ProductCategory extends Model
+{
+    use HasFactory, SoftDeletes;
+
+    protected $fillable = [
+        'name',
+        'slug',
+        'description',
+        'image',
+        'parent_id',
+        'sort_order',
+        'is_active',
+    ];
+
+    protected $casts = [
+        'is_active' => 'boolean',
+    ];
+
+    // 上層分類
+    public function parent(): BelongsTo
+    {
+        return $this->belongsTo(ProductCategory::class, 'parent_id');
+    }
+
+    // 子分類
+    public function children(): HasMany
+    {
+        return $this->hasMany(ProductCategory::class, 'parent_id');
+    }
+
+    // 所有子分類（遞迴）
+    public function allChildren(): HasMany
+    {
+        return $this->children()->with('allChildren');
+    }
+
+    // 商品
+    public function products(): HasMany
+    {
+        return $this->hasMany(Product::class, 'category_id');
+    }
+
+    // 作用域：只顯示啟用的分類
+    public function scopeActive($query)
+    {
+        return $query->where('is_active', true);
+    }
+
+    // 作用域：只顯示頂層分類
+    public function scopeRoot($query)
+    {
+        return $query->whereNull('parent_id');
+    }
+}
+```
+
+### Product 模型
+```php
+<?php
+
+namespace App\Models;
+
+use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\SoftDeletes;
+
+class Product extends Model
+{
+    use HasFactory, SoftDeletes;
+
+    protected $fillable = [
+        'name',
+        'slug',
+        'description',
+        'short_description',
+        'price',
+        'sale_price',
+        'stock',
+        'sku',
+        'barcode',
+        'category_id',
+        'specifications',
+        'tags',
+        'is_featured',
+        'is_active',
+        'published_at',
+    ];
+
+    protected $casts = [
+        'price' => 'decimal:2',
+        'sale_price' => 'decimal:2',
+        'specifications' => 'array',
+        'tags' => 'array',
+        'is_featured' => 'boolean',
+        'is_active' => 'boolean',
+        'published_at' => 'datetime',
+    ];
+
+    // 分類
+    public function category(): BelongsTo
+    {
+        return $this->belongsTo(ProductCategory::class, 'category_id');
+    }
+
+    // 圖片
+    public function images(): HasMany
+    {
+        return $this->hasMany(ProductImage::class);
+    }
+
+    // 主要圖片
+    public function primaryImage(): BelongsTo
+    {
+        return $this->belongsTo(ProductImage::class)->where('is_primary', true);
+    }
+
+    // 輪播
+    public function banners(): HasMany
+    {
+        return $this->hasMany(Banner::class);
+    }
+
+    // 作用域：只顯示啟用的商品
+    public function scopeActive($query)
+    {
+        return $query->where('is_active', true);
+    }
+
+    // 作用域：特色商品
+    public function scopeFeatured($query)
+    {
+        return $query->where('is_featured', true);
+    }
+
+    // 作用域：已發布商品
+    public function scopePublished($query)
+    {
+        return $query->whereNotNull('published_at')->where('published_at', '<=', now());
+    }
+
+    // 取得當前價格（考慮特價）
+    public function getCurrentPriceAttribute()
+    {
+        return $this->sale_price ?? $this->price;
+    }
+
+    // 檢查是否有特價
+    public function getHasDiscountAttribute()
+    {
+        return !is_null($this->sale_price) && $this->sale_price < $this->price;
+    }
+
+    // 計算折扣百分比
+    public function getDiscountPercentageAttribute()
+    {
+        if (!$this->has_discount) {
+            return 0;
+        }
+
+        return round((($this->price - $this->sale_price) / $this->price) * 100);
+    }
+}
+```
+
+### ProductImage 模型
+```php
+<?php
+
+namespace App\Models;
+
+use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
+
+class ProductImage extends Model
+{
+    use HasFactory;
+
+    protected $fillable = [
+        'product_id',
+        'image_path',
+        'alt_text',
+        'sort_order',
+        'is_primary',
+    ];
+
+    protected $casts = [
+        'is_primary' => 'boolean',
+    ];
+
+    // 商品
+    public function product(): BelongsTo
+    {
+        return $this->belongsTo(Product::class);
+    }
+
+    // 作用域：主要圖片
+    public function scopePrimary($query)
+    {
+        return $query->where('is_primary', true);
+    }
+
+    // 作用域：按排序
+    public function scopeOrdered($query)
+    {
+        return $query->orderBy('sort_order')->orderBy('id');
+    }
+}
+```
+
+### Banner 模型
+```php
+<?php
+
+namespace App\Models;
+
+use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\SoftDeletes;
+
+class Banner extends Model
+{
+    use HasFactory, SoftDeletes;
+
+    protected $fillable = [
+        'title',
+        'description',
+        'image',
+        'link',
+        'type',
+        'product_id',
+        'sort_order',
+        'is_active',
+        'start_at',
+        'end_at',
+    ];
+
+    protected $casts = [
+        'is_active' => 'boolean',
+        'start_at' => 'datetime',
+        'end_at' => 'datetime',
+    ];
+
+    // 商品（當 type 為 product 時）
+    public function product(): BelongsTo
+    {
+        return $this->belongsTo(Product::class);
+    }
+
+    // 作用域：只顯示啟用的輪播
+    public function scopeActive($query)
+    {
+        return $query->where('is_active', true);
+    }
+
+    // 作用域：按類型篩選
+    public function scopeOfType($query, $type)
+    {
+        return $query->where('type', $type);
+    }
+
+    // 作用域：有效的輪播（在時間範圍內）
+    public function scopeValid($query)
+    {
+        return $query->where(function ($q) {
+            $q->whereNull('start_at')
+              ->orWhere('start_at', '<=', now());
+        })->where(function ($q) {
+            $q->whereNull('end_at')
+              ->orWhere('end_at', '>=', now());
+        });
+    }
+
+    // 檢查是否在有效時間內
+    public function getIsValidAttribute()
+    {
+        $now = now();
+        return (!$this->start_at || $this->start_at <= $now) &&
+               (!$this->end_at || $this->end_at >= $now);
+    }
+}
+```
+
+### AboutUs 模型
+```php
+<?php
+
+namespace App\Models;
+
+use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\SoftDeletes;
+
+class AboutUs extends Model
+{
+    use HasFactory, SoftDeletes;
+
+    protected $fillable = [
+        'title',
+        'content',
+        'image',
+        'contact_info',
+        'social_media',
+        'is_active',
+    ];
+
+    protected $casts = [
+        'contact_info' => 'array',
+        'social_media' => 'array',
+        'is_active' => 'boolean',
+    ];
+
+    // 作用域：只顯示啟用的關於我們
+    public function scopeActive($query)
+    {
+        return $query->where('is_active', true);
+    }
+}
+```
+
+## 常用 Artisan 指令
+
+```bash
+# 建立遷移檔案
+php artisan make:migration create_users_table
+php artisan make:migration create_members_table
+php artisan make:migration create_product_categories_table
+php artisan make:migration create_products_table
+php artisan make:migration create_product_images_table
+php artisan make:migration create_banners_table
+php artisan make:migration create_about_us_table
+
+# 建立模型
+php artisan make:model User
+php artisan make:model Member
+php artisan make:model ProductCategory
+php artisan make:model Product
+php artisan make:model ProductImage
+php artisan make:model Banner
+php artisan make:model AboutUs
+
+# 建立控制器
+php artisan make:controller Admin/UserController --resource
+php artisan make:controller Admin/MemberController --resource
+php artisan make:controller Admin/ProductCategoryController --resource
+php artisan make:controller Admin/ProductController --resource
+php artisan make:controller Admin/ProductImageController --resource
+php artisan make:controller Admin/BannerController --resource
+php artisan make:controller Admin/AboutUsController --resource
+
+# 建立請求類
+php artisan make:request Admin/StoreUserRequest
+php artisan make:request Admin/UpdateUserRequest
+php artisan make:request Admin/StoreProductRequest
+php artisan make:request Admin/UpdateProductRequest
+php artisan make:request Admin/StoreProductCategoryRequest
+php artisan make:request Admin/UpdateProductCategoryRequest
+php artisan make:request Admin/StoreBannerRequest
+php artisan make:request Admin/UpdateBannerRequest
+php artisan make:request Admin/StoreAboutUsRequest
+php artisan make:request Admin/UpdateAboutUsRequest
+
+# 執行遷移
+php artisan migrate
+
+# 建立資料填充
+php artisan make:seeder UserSeeder
+php artisan make:seeder ProductCategorySeeder
+php artisan make:seeder ProductSeeder
+php artisan make:seeder BannerSeeder
+php artisan make:seeder AboutUsSeeder
+```
+
+## 開發注意事項
+
+1. **分類結構**：ProductCategory 支援無限層級的分類結構
+2. **商品圖片**：ProductImage 支援多張圖片，可設定主要圖片
+3. **輪播類型**：Banner 支援商品、關於我們、首頁三種類型
+4. **軟刪除**：所有主要模型都實作了軟刪除功能
+5. **時間控制**：Banner 支援開始和結束時間控制
+6. **多語言支援**：可擴展支援多語言功能
+7. **權限控制**：User 模型支援不同角色權限
+8. **資料驗證**：所有輸入都應該有適當的驗證規則
+description:
+globs:
+alwaysApply: false
+---
