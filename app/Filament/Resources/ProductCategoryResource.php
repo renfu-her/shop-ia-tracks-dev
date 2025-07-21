@@ -9,7 +9,6 @@ use Filament\Forms\Form;
 use Filament\Resources\Resource;
 use Filament\Tables;
 use Filament\Tables\Table;
-use Illuminate\Support\Str;
 
 class ProductCategoryResource extends Resource
 {
@@ -32,17 +31,16 @@ class ProductCategoryResource extends Resource
                         Forms\Components\TextInput::make('name')
                             ->label('分類名稱')
                             ->required()
-                            ->maxLength(255)
-                            ->live(onBlur: true)
-                            ->afterStateUpdated(fn (Set $set, ?string $state) => $set('slug', Str::slug($state))),
-                        Forms\Components\TextInput::make('slug')
-                            ->label('網址代碼')
-                            ->required()
-                            ->maxLength(255)
-                            ->unique(ignoreRecord: true),
+                            ->maxLength(255),
                         Forms\Components\Select::make('parent_id')
                             ->label('上層分類')
-                            ->options(ProductCategory::where('id', '!=', request()->route('record'))->pluck('name', 'id'))
+                            ->options(function () {
+                                $query = ProductCategory::query();
+                                if (request()->route('record')) {
+                                    $query->where('id', '!=', request()->route('record'));
+                                }
+                                return $query->pluck('name', 'id');
+                            })
                             ->searchable()
                             ->placeholder('選擇上層分類（可選）'),
                         Forms\Components\Textarea::make('description')
@@ -81,10 +79,6 @@ class ProductCategoryResource extends Resource
                         $prefix = str_repeat('— ', $record->level ?? 0);
                         return $prefix . $record->name;
                     }),
-                Tables\Columns\TextColumn::make('slug')
-                    ->label('網址代碼')
-                    ->searchable()
-                    ->toggleable(),
                 Tables\Columns\TextColumn::make('parent.name')
                     ->label('上層分類')
                     ->sortable()
