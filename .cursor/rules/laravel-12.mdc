@@ -1,0 +1,617 @@
+# Laravel 12 開發規範
+
+## 版本資訊
+- Laravel 版本：12.x
+- PHP 要求：^8.2
+- 參考文檔：https://laravel.com/docs/12.x/documentation
+
+## 專案結構規範
+
+### 目錄結構
+```
+app/
+├── Http/
+│   ├── Controllers/     # 控制器
+│   ├── Middleware/      # 中間件
+│   └── Requests/        # 表單請求驗證
+├── Models/              # Eloquent 模型
+├── Providers/           # 服務提供者
+├── Services/            # 業務邏輯服務層
+├── Repositories/        # 資料庫操作層
+├── Events/              # 事件
+├── Listeners/           # 事件監聽器
+├── Jobs/                # 隊列任務
+├── Mail/                # 郵件類
+├── Notifications/       # 通知類
+└── Exceptions/          # 自定義異常
+```
+
+## 控制器規範
+
+### 基本控制器結構
+```php
+<?php
+
+namespace App\Http\Controllers;
+
+use App\Http\Requests\StoreUserRequest;
+use App\Http\Requests\UpdateUserRequest;
+use App\Models\User;
+use Illuminate\Http\Request;
+use Illuminate\Http\JsonResponse;
+use Illuminate\View\View;
+
+class UserController extends Controller
+{
+    public function index(): View
+    {
+        $users = User::paginate(15);
+        return view('users.index', compact('users'));
+    }
+
+    public function create(): View
+    {
+        return view('users.create');
+    }
+
+    public function store(StoreUserRequest $request): JsonResponse
+    {
+        $user = User::create($request->validated());
+        
+        return response()->json([
+            'message' => '用戶創建成功',
+            'user' => $user
+        ], 201);
+    }
+
+    public function show(User $user): View
+    {
+        return view('users.show', compact('user'));
+    }
+
+    public function edit(User $user): View
+    {
+        return view('users.edit', compact('user'));
+    }
+
+    public function update(UpdateUserRequest $request, User $user): JsonResponse
+    {
+        $user->update($request->validated());
+        
+        return response()->json([
+            'message' => '用戶更新成功',
+            'user' => $user
+        ]);
+    }
+
+    public function destroy(User $user): JsonResponse
+    {
+        $user->delete();
+        
+        return response()->json([
+            'message' => '用戶刪除成功'
+        ]);
+    }
+}
+```
+
+## 模型規範
+
+### 基本模型結構
+```php
+<?php
+
+namespace App\Models;
+
+use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\SoftDeletes;
+use Illuminate\Database\Eloquent\Casts\Attribute;
+
+class User extends Model
+{
+    use HasFactory, SoftDeletes;
+
+    protected $fillable = [
+        'name',
+        'email',
+        'password',
+    ];
+
+    protected $hidden = [
+        'password',
+        'remember_token',
+    ];
+
+    protected $casts = [
+        'email_verified_at' => 'datetime',
+        'password' => 'hashed',
+        'settings' => 'array',
+    ];
+
+    // 存取器
+    protected function name(): Attribute
+    {
+        return Attribute::make(
+            get: fn (string $value) => ucfirst($value),
+            set: fn (string $value) => strtolower($value),
+        );
+    }
+
+    // 關聯
+    public function posts(): HasMany
+    {
+        return $this->hasMany(Post::class);
+    }
+
+    // 作用域
+    public function scopeActive($query)
+    {
+        return $query->where('is_active', true);
+    }
+
+    // 事件
+    protected static function booted()
+    {
+        static::creating(function ($user) {
+            $user->email_verified_at = now();
+        });
+    }
+}
+```
+
+## 表單請求驗證
+
+### 基本請求類結構
+```php
+<?php
+
+namespace App\Http\Requests;
+
+use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Contracts\Validation\Validator;
+use Illuminate\Http\Exceptions\HttpResponseException;
+
+class StoreUserRequest extends FormRequest
+{
+    public function authorize(): bool
+    {
+        return true;
+    }
+
+    public function rules(): array
+    {
+        return [
+            'name' => 'required|string|max:255',
+            'email' => 'required|email|unique:users,email',
+            'password' => 'required|string|min:8|confirmed',
+            'avatar' => 'nullable|image|mimes:jpeg,png,jpg,gif|max:2048',
+        ];
+    }
+
+    public function messages(): array
+    {
+        return [
+            'name.required' => '姓名為必填欄位',
+            'email.required' => '電子郵件為必填欄位',
+            'email.email' => '請輸入有效的電子郵件格式',
+            'email.unique' => '此電子郵件已被使用',
+            'password.required' => '密碼為必填欄位',
+            'password.min' => '密碼至少需要8個字元',
+            'password.confirmed' => '密碼確認不符',
+        ];
+    }
+
+    protected function failedValidation(Validator $validator)
+    {
+        throw new HttpResponseException(
+            response()->json([
+                'message' => '驗證失敗',
+                'errors' => $validator->errors()
+            ], 422)
+        );
+    }
+}
+```
+
+## 服務層規範
+
+### 基本服務類結構
+```php
+<?php
+
+namespace App\Services;
+
+use App\Models\User;
+use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\DB;
+use Exception;
+
+class UserService
+{
+    public function createUser(array $data): User
+    {
+        return DB::transaction(function () use ($data) {
+            $user = User::create([
+                'name' => $data['name'],
+                'email' => $data['email'],
+                'password' => Hash::make($data['password']),
+            ]);
+
+            // 發送歡迎郵件
+            $user->notify(new WelcomeNotification());
+
+            return $user;
+        });
+    }
+
+    public function updateUser(User $user, array $data): User
+    {
+        return DB::transaction(function () use ($user, $data) {
+            $user->update($data);
+            
+            return $user->fresh();
+        });
+    }
+
+    public function deleteUser(User $user): bool
+    {
+        return DB::transaction(function () use ($user) {
+            // 刪除相關資料
+            $user->posts()->delete();
+            
+            return $user->delete();
+        });
+    }
+}
+```
+
+## 資料庫遷移規範
+
+### 基本遷移結構
+```php
+<?php
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
+
+return new class extends Migration
+{
+    public function up(): void
+    {
+        Schema::create('users', function (Blueprint $table) {
+            $table->id();
+            $table->string('name');
+            $table->string('email')->unique();
+            $table->timestamp('email_verified_at')->nullable();
+            $table->string('password');
+            $table->boolean('is_active')->default(true);
+            $table->json('settings')->nullable();
+            $table->rememberToken();
+            $table->timestamps();
+            $table->softDeletes();
+
+            // 索引
+            $table->index(['email', 'is_active']);
+        });
+    }
+
+    public function down(): void
+    {
+        Schema::dropIfExists('users');
+    }
+};
+```
+
+## 路由規範
+
+### API 路由
+```php
+// routes/api.php
+Route::middleware('auth:sanctum')->group(function () {
+    Route::apiResource('users', UserController::class);
+    Route::post('users/{user}/avatar', [UserController::class, 'uploadAvatar']);
+});
+```
+
+### Web 路由
+```php
+// routes/web.php
+Route::middleware(['auth', 'verified'])->group(function () {
+    Route::resource('users', UserController::class);
+    Route::get('profile', [ProfileController::class, 'edit'])->name('profile.edit');
+    Route::patch('profile', [ProfileController::class, 'update'])->name('profile.update');
+});
+```
+
+## 隊列任務規範
+
+### 基本任務類結構
+```php
+<?php
+
+namespace App\Jobs;
+
+use App\Models\User;
+use Illuminate\Bus\Queueable;
+use Illuminate\Contracts\Queue\ShouldQueue;
+use Illuminate\Foundation\Bus\Dispatchable;
+use Illuminate\Queue\InteractsWithQueue;
+use Illuminate\Queue\SerializesModels;
+use Illuminate\Support\Facades\Mail;
+
+class SendWelcomeEmail implements ShouldQueue
+{
+    use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
+
+    public function __construct(
+        public User $user
+    ) {}
+
+    public function handle(): void
+    {
+        Mail::to($this->user->email)
+            ->send(new WelcomeMail($this->user));
+    }
+
+    public function failed(\Throwable $exception): void
+    {
+        // 處理失敗邏輯
+        logger()->error('Welcome email failed', [
+            'user_id' => $this->user->id,
+            'error' => $exception->getMessage()
+        ]);
+    }
+}
+```
+
+## 事件和監聽器
+
+### 事件類
+```php
+<?php
+
+namespace App\Events;
+
+use App\Models\User;
+use Illuminate\Broadcasting\Channel;
+use Illuminate\Broadcasting\InteractsWithSockets;
+use Illuminate\Broadcasting\PresenceChannel;
+use Illuminate\Broadcasting\PrivateChannel;
+use Illuminate\Contracts\Broadcasting\ShouldBroadcast;
+use Illuminate\Foundation\Events\Dispatchable;
+use Illuminate\Queue\SerializesModels;
+
+class UserRegistered implements ShouldBroadcast
+{
+    use Dispatchable, InteractsWithSockets, SerializesModels;
+
+    public function __construct(
+        public User $user
+    ) {}
+
+    public function broadcastOn(): array
+    {
+        return [
+            new PrivateChannel('user.' . $this->user->id),
+        ];
+    }
+
+    public function broadcastAs(): string
+    {
+        return 'user.registered';
+    }
+}
+```
+
+### 監聽器類
+```php
+<?php
+
+namespace App\Listeners;
+
+use App\Events\UserRegistered;
+use App\Jobs\SendWelcomeEmail;
+use Illuminate\Contracts\Queue\ShouldQueue;
+
+class SendWelcomeNotification implements ShouldQueue
+{
+    public function handle(UserRegistered $event): void
+    {
+        SendWelcomeEmail::dispatch($event->user);
+    }
+}
+```
+
+## 中間件規範
+
+### 自定義中間件
+```php
+<?php
+
+namespace App\Http\Middleware;
+
+use Closure;
+use Illuminate\Http\Request;
+use Symfony\Component\HttpFoundation\Response;
+
+class CheckUserPermission
+{
+    public function handle(Request $request, Closure $next, string $permission): Response
+    {
+        if (!auth()->user()->hasPermission($permission)) {
+            abort(403, '權限不足');
+        }
+
+        return $next($request);
+    }
+}
+```
+
+## 快取策略
+
+### 模型快取
+```php
+// 在模型中
+public function posts(): HasMany
+{
+    return $this->hasMany(Post::class)->remember(60);
+}
+
+// 快取查詢結果
+$users = Cache::remember('active_users', 3600, function () {
+    return User::active()->get();
+});
+```
+
+## 日誌規範
+
+### 結構化日誌
+```php
+use Illuminate\Support\Facades\Log;
+
+Log::info('用戶登入', [
+    'user_id' => $user->id,
+    'ip_address' => request()->ip(),
+    'user_agent' => request()->userAgent(),
+]);
+
+Log::error('資料庫連接失敗', [
+    'error' => $exception->getMessage(),
+    'file' => $exception->getFile(),
+    'line' => $exception->getLine(),
+]);
+```
+
+## 測試規範
+
+### 功能測試
+```php
+<?php
+
+namespace Tests\Feature;
+
+use App\Models\User;
+use Illuminate\Foundation\Testing\RefreshDatabase;
+use Tests\TestCase;
+
+class UserControllerTest extends TestCase
+{
+    use RefreshDatabase;
+
+    public function test_can_create_user(): void
+    {
+        $userData = [
+            'name' => 'John Doe',
+            'email' => 'john@example.com',
+            'password' => 'password123',
+            'password_confirmation' => 'password123',
+        ];
+
+        $response = $this->postJson('/api/users', $userData);
+
+        $response->assertStatus(201)
+                ->assertJsonStructure([
+                    'message',
+                    'user' => ['id', 'name', 'email']
+                ]);
+
+        $this->assertDatabaseHas('users', [
+            'email' => 'john@example.com'
+        ]);
+    }
+}
+```
+
+## 環境配置
+
+### .env 範例
+```env
+APP_NAME=Laravel
+APP_ENV=local
+APP_KEY=base64:your-key-here
+APP_DEBUG=true
+APP_URL=http://localhost
+
+DB_CONNECTION=mysql
+DB_HOST=127.0.0.1
+DB_PORT=3306
+DB_DATABASE=laravel
+DB_USERNAME=root
+DB_PASSWORD=
+
+CACHE_DRIVER=redis
+QUEUE_CONNECTION=redis
+SESSION_DRIVER=redis
+SESSION_LIFETIME=120
+
+REDIS_HOST=127.0.0.1
+REDIS_PASSWORD=null
+REDIS_PORT=6379
+```
+
+## 常用 Artisan 指令
+
+```bash
+# 建立控制器
+php artisan make:controller UserController --resource
+
+# 建立模型
+php artisan make:model User -m
+
+# 建立遷移
+php artisan make:migration create_users_table
+
+# 建立請求類
+php artisan make:request StoreUserRequest
+
+# 建立服務類
+php artisan make:service UserService
+
+# 建立任務
+php artisan make:job SendWelcomeEmail
+
+# 建立事件
+php artisan make:event UserRegistered
+
+# 建立監聽器
+php artisan make:listener SendWelcomeNotification
+
+# 建立中間件
+php artisan make:middleware CheckUserPermission
+
+# 執行遷移
+php artisan migrate
+
+# 回滾遷移
+php artisan migrate:rollback
+
+# 重新執行遷移
+php artisan migrate:refresh
+
+# 執行測試
+php artisan test
+
+# 清除快取
+php artisan cache:clear
+php artisan config:clear
+php artisan route:clear
+php artisan view:clear
+```
+
+## 最佳實踐
+
+1. **使用表單請求驗證** - 將驗證邏輯從控制器分離
+2. **實作服務層** - 將業務邏輯從控制器分離
+3. **使用資源集合** - 統一 API 回應格式
+4. **實作軟刪除** - 保留資料完整性
+5. **使用隊列** - 處理耗時操作
+6. **實作事件驅動** - 解耦應用程式組件
+7. **使用快取** - 提升效能
+8. **結構化日誌** - 便於除錯和監控
+9. **編寫測試** - 確保程式碼品質
+10. **使用環境變數** - 區分不同環境配置
+alwaysApply: true
+---
