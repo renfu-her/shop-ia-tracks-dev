@@ -8,15 +8,18 @@ use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 
-class User extends Authenticatable
+class Member extends Authenticatable
 {
     use HasFactory, Notifiable, SoftDeletes;
 
     protected $fillable = [
         'name',
         'email',
+        'phone',
         'password',
-        'role',
+        'address',
+        'birthday',
+        'gender',
         'is_active',
     ];
 
@@ -28,16 +31,13 @@ class User extends Authenticatable
     protected $casts = [
         'email_verified_at' => 'datetime',
         'password' => 'hashed',
+        'address' => 'array',
+        'birthday' => 'date',
         'is_active' => 'boolean',
     ];
 
-    public function isAdmin(): bool
+    public function getAuthPassword()
     {
-        return $this->role === 'admin';
-    }
-
-    public function isManager(): bool
-    {
-        return $this->role === 'manager';
+        return $this->password;
     }
 }
