@@ -1,0 +1,105 @@
+# 需要注意的事情，版本：3.3
+
+## 已安裝的 Filament 相關套件
+
+根據 composer.json，已安裝以下套件：
+- `filament/filament: ^3.3` - 主要的 Filament 套件
+- `coolsam/flatpickr: ^3.2` - Flatpickr 日期選擇器
+- `mohamedsabil83/filament-forms-tinyeditor: ^2.4` - TinyEditor 富文本編輯器
+- `intervention/image: ^3.11` - 圖片處理套件
+
+## 開發規範
+
+- composer.json 可以看出是否已經有 filament 的文件
+- 當我建立 resource，記得要建立 resources 底下要建立 create, edit, list 的文件
+
+- resource 裏面是要將一下的資料寫的
+
+```
+protected static ?string $navigationGroup = '網站管理';
+protected static ?string $navigationLabel = '廣告管理';
+protected static ?string $modelLabel = '廣告';
+protected static ?string $pluralModelLabel = '廣告';
+protected static ?int $navigationSort = 0;
+```
+
+- create，edit 要遵循要增加一段
+
+```
+protected function getRedirectUrl(): string
+    {
+        return $this->getResource()::getUrl('index');
+    }
+```
+
+## 表單元件使用規範
+
+### FileUpload 元件（使用 Intervention Image 處理）
+
+```
+Forms\Components\FileUpload::make('image')
+                ->label('封面圖片')
+                ->image()
+                ->imageEditor()
+                ->directory('albums')
+                ->columnSpanFull()
+                ->acceptedFileTypes(['image/jpeg', 'image/png', 'image/webp'])
+                ->downloadable()
+                ->openable()
+                ->getUploadedFileNameForStorageUsing(
+                    fn($file): string => (string) str(Str::uuid7() . '.webp')
+                )
+
+                ->saveUploadedFileUsing(function ($file) {
+                    $manager = new ImageManager(new Driver());
+                    $image = $manager->read($file);
+                    $image->cover(1024, 1024);
+                    $filename = Str::uuid7()->toString() . '.webp';
+
+                    if (!file_exists(storage_path('app/public/albums'))) {
+                        mkdir(storage_path('app/public/albums'), 0755, true);
+                    }
+
+                    $image->toWebp(80)->save(storage_path('app/public/albums/' . $filename));
+                    return 'albums/' . $filename;
+                })
+                ->deleteUploadedFileUsing(function ($file) {
+                    if ($file) {
+                        Storage::disk('public')->delete($file);
+                    }
+                }),
+```
+
+### RichEditor 元件（使用 TinyEditor）
+
+```
+use Mohamedsabil83\FilamentFormsTinyeditor\Components\TinyEditor;
+TinyEditor::make('content')
+```
+
+### DateTimePicker 元件（使用 Flatpickr）
+
+```
+use Coolsam\FilamentFlatpickr\Forms\Components\Flatpickr;
+
+Flatpickr::make('rent_at')
+                ->label('出租時間')
+                ->dateFormat('Y-m-d')
+                ->allowInput()
+                ->altInput(true)
+                ->altFormat('Y-m-d')
+                ->customConfig([
+                    'locale' => 'zh_tw',
+                ]),
+```
+
+## 必要的 Import 語句
+
+```php
+use Illuminate\Support\Str;
+use Illuminate\Support\Facades\Storage;
+use Intervention\Image\ImageManager;
+use Intervention\Image\Drivers\Gd\Driver;
+use Coolsam\FilamentFlatpickr\Forms\Components\Flatpickr;
+use Mohamedsabil83\FilamentFormsTinyeditor\Components\TinyEditor;
+```
