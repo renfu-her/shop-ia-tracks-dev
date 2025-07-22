@@ -18,6 +18,9 @@ class Member extends Authenticatable
         'email',
         'phone',
         'password',
+        'county',
+        'district',
+        'zipcode',
         'address',
         'birthday',
         'gender',
@@ -32,10 +35,65 @@ class Member extends Authenticatable
     protected $casts = [
         'email_verified_at' => 'datetime',
         'password' => 'hashed',
-        'address' => 'array',
         'birthday' => 'date',
         'is_active' => 'boolean',
     ];
+
+    /**
+     * 取得完整地址
+     */
+    public function getFullAddressAttribute(): string
+    {
+        $parts = [];
+        
+        if ($this->zipcode) {
+            $parts[] = $this->zipcode;
+        }
+        
+        if ($this->county) {
+            $parts[] = $this->county;
+        }
+        
+        if ($this->district) {
+            $parts[] = $this->district;
+        }
+        
+        if ($this->address) {
+            $parts[] = $this->address;
+        }
+        
+        return implode('', $parts);
+    }
+
+    /**
+     * 取得簡短地址（不含詳細地址）
+     */
+    public function getShortAddressAttribute(): string
+    {
+        $parts = [];
+        
+        if ($this->zipcode) {
+            $parts[] = $this->zipcode;
+        }
+        
+        if ($this->county) {
+            $parts[] = $this->county;
+        }
+        
+        if ($this->district) {
+            $parts[] = $this->district;
+        }
+        
+        return implode('', $parts);
+    }
+
+    /**
+     * 檢查是否有完整地址資訊
+     */
+    public function hasCompleteAddress(): bool
+    {
+        return !empty($this->county) && !empty($this->district) && !empty($this->address);
+    }
 
     /**
      * 取得會員擁有的優惠券代碼
